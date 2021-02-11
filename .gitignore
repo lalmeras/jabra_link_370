@@ -1,0 +1,10 @@
+.*.swp
+*.egg-info
+__pycache__/
+
+/.tox
+/.settings/
+/.pydevproject
+/.project
+/build/
+/.coverage

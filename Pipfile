@@ -1,0 +1,13 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[dev-packages]
+ipdb = {}
+
+[packages]
+jabra-link-370 = {editable = true, path = "."}
+
+[requires]
+python_version = "3.9"
