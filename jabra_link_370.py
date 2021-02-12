@@ -3,6 +3,7 @@ __version__ = '0.0.1'
 import binascii
 import codecs
 import ctypes
+import functools
 import re
 import struct
 
@@ -25,9 +26,9 @@ def cli(ctx):
     ctx.obj = {}
 
 
-@cli.command()
-def adapters():
-    """List BT Jabra Link adapters"""
+@cli.command('adapters')
+def cmd_adapters():
+    """List Jabra Link bluetooth adapters"""
     adapters = do_list_adapters()
     if adapters:
         for adapter in adapters:
@@ -36,20 +37,26 @@ def adapters():
         print("No devices found.")
 
 
-@cli.group()
-@click.option('-a', '--adapter', 'index_or_name_or_serial', default=0, type=click.STRING)
-@click.pass_context
-def adapter(ctx, index_or_name_or_serial):
-    """Perform adapter configuration."""
-    try:
-        ctx.obj['adapter'] = lookup_adapter(index_or_name_or_serial)
-    except JabraError as exc:
-        raise click.ClickException(exc.args[0])
+def install_adapter(f):
+    """Handle -a/--adapter option for all commands."""
+    @click.option('-a', '--adapter', 'index_or_name_or_serial', default=0, type=click.STRING,
+                  help='Target an specific adapter; first adapter when option is missing.')
+    @click.pass_context
+    def new_func(ctx, *args, **kwargs):
+        try:
+            n_kwargs = dict(kwargs)
+            del n_kwargs['index_or_name_or_serial']
+            ctx.obj['adapter'] = lookup_adapter(kwargs['index_or_name_or_serial'])
+            return ctx.invoke(f, *args, **n_kwargs)
+        except JabraError as exc:
+            raise click.ClickException(exc.args[0])
+    return functools.update_wrapper(new_func, f)
 
 
-@adapter.command()
+@cli.command('list')
 @click.pass_context
-def headsets(ctx):
+@install_adapter
+def cmd_headsets(ctx):
     """List devices attached to adapter."""
     adapter = ctx.obj['adapter']
     headsets = []
@@ -63,36 +70,42 @@ def headsets(ctx):
         print('No headsets found.')
 
 
-@adapter.command()
-@click.argument('index_or_addr')
+@cli.command('connect')
 @click.pass_context
-def connect(ctx, index_or_addr):
-    """Connect device (identified by index or address)."""
-    handle_connect(True, ctx, index_or_addr)
+@click.argument('index_or_addr_or_name')
+@install_adapter
+def cmd_connect(ctx, index_or_addr_or_name):
+    """Connect already paired device (identified by INDEX_OR_ADDR_OR_NAME). Use _list_ command to display
+    paired devices.
+    """
+    handle_connect(False, ctx, True)
+    handle_connect(True, ctx, index_or_addr_or_name)
 
 
-@adapter.command()
-@click.argument('index_or_addr')
+@cli.command('disconnect')
 @click.pass_context
-def disconnect(ctx, index_or_addr):
-    """Disconnect device (identified by index or address)."""
-    handle_connect(False, ctx, index_or_addr)
+@install_adapter
+def cmd_disconnect(ctx):
+    """Disconnect currently connected device."""
+    handle_connect(False, ctx, True)
 
 
-@adapter.command()
+@cli.command('clear')
 @click.pass_context
-def clear(ctx):
+@install_adapter
+def cmd_clear(ctx):
     """Remove ALL pairings."""
     adapter = ctx.obj['adapter']
     with hid.Device(adapter['vendor_id'], adapter['product_id'], adapter['serial_number']) as device:
         do_clear(device)
 
 
-@adapter.command()
+@cli.command('pair')
 @click.argument('addr_or_name', required=False)
 @click.pass_context
-def pair(ctx, addr_or_name):
-    """List available devices (scan devices in pairing mode)."""
+@install_adapter
+def cmd_pair(ctx, addr_or_name):
+    """List available devices for pairing. Optionally pair device if ADDR_OR_NAME is provided."""
     adapter = ctx.obj['adapter']
     with hid.Device(adapter['vendor_id'], adapter['product_id'], adapter['serial_number']) as device:
         candidates = do_search_devices(device, addr_or_name)
@@ -100,9 +113,9 @@ def pair(ctx, addr_or_name):
         if addr_or_name:
             candidate = lookup_candidate(candidates, addr_or_name)
             if candidate is not None:
-                print("Device %s (%s) found." % (candidate['deviceName'], candidate['address'], ))
+                print("Device %s (%s) paired." % (candidate['deviceName'], candidate['address'], ))
                 do_pair(device, candidate)
-                print("Device connected.")
+                print("Device %s connected." % (candidate['deviceName'], ))
                 print_candidates = False
             else:
                 print("Candidate %s not found. Found devices:" % (addr_or_name))
@@ -113,41 +126,49 @@ def pair(ctx, addr_or_name):
                 print("No devices found.")
 
 
-@adapter.command()
-@click.argument('addr_or_name_or_index')
+@cli.command('unpair')
+@click.argument('index_or_addr_or_name')
 @click.pass_context
-def unpair(ctx, addr_or_name_or_index):
-    """List available devices (scan devices in pairing mode)."""
+@install_adapter
+def cmd_unpair(ctx, index_or_addr_or_name):
+    """Unpair device designated by INDEX_OR_ADDR_OR_NAME."""
     adapter = ctx.obj['adapter']
     with hid.Device(adapter['vendor_id'], adapter['product_id'], adapter['serial_number']) as device:
-        if do_unpair(device, addr_or_name_or_index):
-            print("Disconnected.")
+        removed = do_unpair(device, index_or_addr_or_name)
+        if removed:
+            print("Device %s unpaired." % (removed['deviceName'], ))
         else:
-            print("Device %s not found." % (addr_or_name_or_index, ))
+            print("Device %s not found." % (index_or_addr_or_name, ))
 
 
-def handle_connect(target_connect, ctx, index_or_addr):
+def handle_connect(target_connect, ctx, index_or_addr_or_connected):
     handler = do_connect if target_connect else do_disconnect
     adapter = ctx.obj['adapter']
     with hid.Device(adapter['vendor_id'], adapter['product_id'], adapter['serial_number']) as device:
-        headsets = do_list_headsets(device)
-        def headset_filter(h):
-            if ':' in index_or_addr:
-                return h['address'] == index_or_addr
-            else:
-                return h['index'] == int(index_or_addr)
         try:
-            headset = next(filter(headset_filter, headsets))
+            headsets = do_list_headsets(device)
+            headset = next(filter(get_headset_matcher(index_or_addr_or_connected), headsets))
             handler(device, headset)
+            if target_connect:
+                print("Device %s connected." % (headset['deviceName'], ))
+            else:
+                print("Device %s disconnected." % (headset['deviceName'], ))
         except StopIteration:
-            raise click.ClickException("Device %s not found." % (index_or_addr, ))
+            # disconnect if not device connected is not an error
+            if target_connect:
+                raise click.ClickException("Device %s not found." % (index_or_addr_or_connected, ))
 
 
-@adapter.command()
-@click.option('--enabled/--disabled', 'status', default=None)
+@cli.command()
+@click.option('--enabled/--disabled', 'status', default=None,
+              help="Enable/disable auto-pairing; display current status if not provided.")
 @click.pass_context
+@install_adapter
 def auto_pairing(ctx, status):
-    """Configure auto-pairing status."""
+    """Configure auto-pairing status.
+    
+    When auto-pairing is enabled, if no known device is available when adapter
+    is plugged in, a pairing is automatically done with first available device."""
     adapter = ctx.obj['adapter']
     if status is None:
         with hid.Device(adapter['vendor_id'], adapter['product_id'], adapter['serial_number']) as device:
@@ -323,16 +344,16 @@ def do_unpair(device, index_or_addr_or_name):
     headsets = do_list_headsets(device)
     current = next(filter(get_headset_matcher(index_or_addr_or_name), headsets), None)
     if current:
-        if current['is_connected']:
+        if current['connected']:
             do_disconnect(device, current)
         counter = 0
         buff = bytearray(64)
-        buff[0:6] = b'\x05\x01\x00' + struct.pack('B', counter) + b'\x88\x0d\x2a'
-        buff[7:8] = struct.pack('B', current['index'])
+        buff[0:7] = b'\x05\x01\x00' + struct.pack('B', counter) + b'\x88\x0d\x2a'
+        buff[8:9] = struct.pack('B', current['index'])
         device.write(bytes(buff))
         device.read(64)
         device.read(64)
-        return True
+        return current
 
 
 def do_clear(device):
@@ -344,15 +365,17 @@ def do_clear(device):
     device.read(64)
 
 
-def get_headset_matcher(target_str):
+def get_headset_matcher(target_bool_int_str):
     def f(headset):
+        if isinstance(target_bool_int_str, bool):
+            return headset['connected']
         if 'index' in headset:
             try:
-                index = int(target_str)
+                index = int(target_bool_int_str)
                 return index == headset['index']
             except Exception:
                 pass
-        return headset['address'] == target_str or headset['deviceName'] == target_str
+        return headset['address'] == target_bool_int_str or headset['deviceName'] == target_bool_int_str
     return f
 
 
