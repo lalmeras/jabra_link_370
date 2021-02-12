@@ -13,9 +13,14 @@ VENDOR_ID = 0x0b0e
 PRODUCT_ID = 0x245e
 
 
+class JabraError(Exception):
+    pass
+
+
 @click.group()
-def cli():
-    return
+@click.pass_context
+def cli(ctx):
+    ctx.obj = {}
 
 
 @cli.command()
@@ -27,7 +32,6 @@ def adapters():
             print("%d: %s:%s %s" % (adapter['index'], adapter['vendor_id'], adapter['product_id'], adapter['product_string']))
     else:
         print("No devices found.")
-    return
 
 
 @cli.command()
@@ -46,10 +50,45 @@ def headsets(index):
             print('No headsets found')
     except IndexError:
         print("Device %d not found", (index, ))
-    return
+
+
+@cli.group()
+@click.option('-a', '--adapter', 'index', default=0, type=click.INT)
+@click.pass_context
+def adapter(ctx, index):
+    """Perform adapter configuration"""
+    try:
+        ctx.obj['adapter'] = get_adapter(index)
+    except JabraError as exc:
+        raise click.ClickException(exc.args[0])
+
+
+@adapter.command()
+@click.option('--enabled/--disabled', 'status', default=None)
+@click.pass_context
+def auto_pairing(ctx, status):
+    """Configure auto-pairing status"""
+    adapter = ctx.obj['adapter']
+    if status is None:
+        with hid.Device(adapter['vendor_id'], adapter['product_id'], adapter['serial_number']) as device:
+            status = pairing_status(device)
+            print("enabled" if status else "disabled")
+    else:
+        with hid.Device(adapter['vendor_id'], adapter['product_id'], adapter['serial_number']) as device:
+            status = set_pairing_status(device, status)
+            print("enabled" if status else "disabled")
+    pass
 
 
 hexlify = codecs.getencoder('hex')
+
+
+def get_adapter(index):
+    try:
+        adapters = list_devices()
+        return adapters[index]
+    except IndexError:
+        raise JabraError("Device %d not found" % (index, ))
 
 
 def list_devices():
@@ -59,6 +98,26 @@ def list_devices():
         a['index'] = index
     return adapters
 
+
+def pairing_status(device):
+    counter = 0
+    buff = bytearray(64)
+    buff[0:6] = b'\x05\x01\x00' + struct.pack('B', counter) + b'\x46\x13\x40'
+    device.write(bytes(buff))
+    counter += 1
+    data = device.read(64)
+    return struct.unpack('?', data[7:8])[0]
+
+
+def set_pairing_status(device, status):
+    counter = 0
+    buff = bytearray(64)
+    buff[0:6] = b'\x05\x01\x00' + struct.pack('B', counter) + b'\x87\x13\x40'
+    buff[7:8] = struct.pack('?', status)
+    device.write(bytes(buff))
+    counter += 1
+    device.read(64)
+    return pairing_status(device)
 
 def list_headsets(device):
     headsets = []
