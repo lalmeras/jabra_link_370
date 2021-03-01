@@ -42,10 +42,7 @@ setup(
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',
-        'Environment :: Plugins',
         'License :: OSI Approved :: BSD License',
-        'Topic :: Internet :: WWW/HTTP',
         'Topic :: Utilities'
     ],
 )
-
