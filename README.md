@@ -3,6 +3,21 @@
 Command-line utility to manage Jabra Link 370 adapter.
 
 ```bash
+$ # idVendor and idProduct for GN Netcom Jabra Link 370
+$ # may need to be adapted
+$ cat <<EOF | sudo tee /etc/udev/rules.d/99-hid.rules
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0b0e", ATTRS{idProduct}=="245e", MODE="0666"
+KERNEL=="hidraw*", ATTRS{busnum}=="1", ATTRS{idVendor}=="0b0e", ATTRS{idProduct}=="245e", MODE="0666"
+EOF
+
+$ sudo systemctl restart systemd-udevd
+
+$ sudo dnf install hidapi
+
+$ pipenv install
+
+$ pipenv shell
+
 $ jabra-link --help
 
 # List adapters
