@@ -7,7 +7,7 @@ $ # idVendor and idProduct for GN Netcom Jabra Link 370
 $ # may need to be adapted
 $ cat <<EOF | sudo tee /etc/udev/rules.d/99-hid.rules
 SUBSYSTEM=="usb", ATTRS{idVendor}=="0b0e", ATTRS{idProduct}=="245e", MODE="0666"
-KERNEL=="hidraw*", ATTRS{busnum}=="1", ATTRS{idVendor}=="0b0e", ATTRS{idProduct}=="245e", MODE="0666"
+KERNEL=="hidraw*", ATTRS{idVendor}=="0b0e", ATTRS{idProduct}=="245e", MODE="0666"
 EOF
 
 $ sudo systemctl restart systemd-udevd
